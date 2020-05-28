@@ -3,17 +3,24 @@ import re
 import time
 import numpy as np
 
+# map user-defined variables to symbolic names(var)
+var_list = ['balances', 'userBalance[msg.sender]', '[msg.sender]', '[from]', '[to]', 'msg.sender']
+
+# function limit type
+function_limit = ['private', 'onlyOwner', 'internal', 'onlyGovernor', 'onlyCommittee', 'onlyAdmin', 'onlyManager',
+                  'only_owner', 'preventReentry', 'onlyProxyOwner', 'ownerExists', 'noReentrancy']
+
 # Boolean condition expression:
-var_op_bool = ['!', '~', '**', '*', '!=', '<', '>', '<=', '>=', '==', '<<', '>>', '||', '&&']
+var_op_bool = ['~', '**', '!=', '<', '>', '<=', '>=', '<<=', '>>=', '==', '<<', '>>', '||', '&&']
 
 # Assignment expressions
-var_op_assign = ['|=', '=', '^=', '&=', '<<=', '>>=', '+=', '-=', '*=', '/=', '%=', '++', '--']
+var_op_assign = ['|=', '&=', '+=', '-=', '*=', '/=', '%=', '++', '--', '=']
 
+# function call restrict
+core_call_restrict = ['NoLimit', 'LimitedAC']
 
-"""
-block.timestamp is used for solidity smart contract
-GetTimestamp() is used for vntchain smart contract
-"""
+# Suspicious reentrancy mark
+var_reentrancy_mark = ['compliance', 'warning', 'violation']
 
 
 # split all functions of contracts
@@ -40,21 +47,14 @@ def split_function(filepath):
 def generate_graph(filepath):
     allFunctionList = split_function(filepath)  # Store all functions
     timeStampList = []  # Store all W functions that call call.value
-    cFunctionList = []  # Store a single C function that calls a W function
-    CFunctionLists = []  # Store all C functions that call W function
-    withdrawNameList = []  # Store the W function name that calls block.timestamp
     otherFunctionList = []  # Store functions other than W functions
     node_list = []  # Store all the points
     edge_list = []  # Store edge and edge features
     node_feature_list = []  # Store nodes feature
     params = []  # Store the parameters of the W functions
     param = []
+    timeStampFlag = 0
     key_count = 0  # Number of core nodes S and W
-    c_count = 0  # Number of core nodes C
-
-    # ======================================================================
-    # ---------------------------  Handle nodes  ---------------------------
-    # ======================================================================
 
     # Store other functions without W functions (with block.timestamp)
     for i in range(len(allFunctionList)):
@@ -62,152 +62,150 @@ def generate_graph(filepath):
         for j in range(len(allFunctionList[i])):
             text = allFunctionList[i][j]
             if 'block.timestamp' in text:
+                timeStampList.append(allFunctionList[i])
                 flag += 1
         if flag == 0:
             otherFunctionList.append(allFunctionList[i])
 
+    # ======================================================================
+    # ---------------------------  store S and W    ------------------------
+    # ======================================================================
     # Traverse all functions, find the block.timestamp keyword, store the S and W nodes
-    for i in range(len(allFunctionList)):
-        for j in range(len(allFunctionList[i])):
-            text = allFunctionList[i][j]
+    for i in range(len(timeStampList)):
+        node_list.append("S" + str(i))
+        node_list.append("W" + str(i))
+        timeStampFlag += 1
+
+        for j in range(len(timeStampList[i])):
+            text = timeStampList[i][j]
+
+            # Handling W function access restrictions, which can be used for access restriction properties
+            if 'block.timestamp' in text:
+                limit_count = 0
+                for k in range(len(function_limit)):
+                    if function_limit[k] in timeStampList[i][0]:
+                        limit_count += 1
+                        node_feature_list.append(
+                            ["S" + str(i), "LimitedAC", ["W" + str(i)], 2])
+                        node_feature_list.append(
+                            ["W" + str(i), "LimitedAC", ["NULL"], 1])
+                        edge_list.append(["W" + str(i), "S" + str(i), 1, 'FW'])
+                        break
+                    elif k + 1 == len(function_limit) and limit_count == 0:
+                        node_feature_list.append(
+                            ["S" + str(i), "NoLimit", ["W" + str(i)], 2])
+                        node_feature_list.append(
+                            ["W" + str(i), "NoLimit", ["NULL"], 1])
+
+                    edge_list.append(["W" + str(i), "S" + str(i), 1, 'FW'])
+
+    # ======================================================================
+    # ---------------------------  store var nodes  ------------------------
+    # ======================================================================
+    for i in range(len(timeStampList)):
+        TimestampFlag1 = 0
+        TimestampFlag2 = 0
+        VarTimestamp = None
+        varFlag = 0
+
+        for j in range(len(timeStampList[i])):
+            text = timeStampList[i][j]
             if 'block.timestamp' in text and "=" in text:
-                node_list.append("S")
-                node_list.append("W" + str(key_count))
-                timeStampList.append([allFunctionList[i], "S", "W" + str(key_count)])
-
-                # For example: function transfer(address _to, uint _value, bytes _data, string _custom_fallback)
-                # get function name (transfer)
-                tmp = re.compile(r'\b([_A-Za-z]\w*)\b(?:(?=\s*\w+\()|(?!\s*\w+))')
-                result_withdraw = tmp.findall(allFunctionList[i][0])  # get the function name of current W node
-                withdrawNameTmp = result_withdraw[1]
-                if withdrawNameTmp == "payable":
-                    withdrawName = "FALLBACK"
-                else:
-                    withdrawName = withdrawNameTmp + "("
-                withdrawNameList.append(["W" + str(key_count), withdrawName])
-
-                # get the params of the selected function
-                ss = allFunctionList[i][0]
-                pp = re.compile(r'[(](.*?)[)]', re.S)
-                result = re.findall(pp, ss)
-                result_params = result[0].split(",")
-                for n in range(len(result_params)):
-                    param.append(result_params[n].strip().split(" ")[-1])
-                params.append([param, "S", "W" + str(key_count)])
-
-                # add the node and feature
-                node_feature_list.append(
-                    ["S", "S", ["W" + str(key_count)], 3])
-                node_feature_list.append(
-                    ["W" + str(key_count), "W" + str(key_count), [], 2])
-
-                key_count += 1
-
-    if key_count == 0:
-        print("Currently, there is no key word block.timestamp")
-        node_feature_list.append(["S", "S", ["NULL"], 0])
-        node_feature_list.append(["W0", "W0", ["NULL"], 0])
-        node_feature_list.append(["C0", "C0", ["NULL"], 0])
-    else:
-        # Traverse all functions and find the C function nodes that calls the W function
-        # (determine the function call by matching the number of arguments)
-        for k in range(len(withdrawNameList)):
-            w_key = withdrawNameList[k][0]
-            w_name = withdrawNameList[k][1]
-            for i in range(len(otherFunctionList)):
-                if len(otherFunctionList[i]) > 2:
-                    for j in range(1, len(otherFunctionList[i])):
-                        text = otherFunctionList[i][j]
-                        if w_name in text:
-                            p = re.compile(r'[(](.*?)[)]', re.S)
-                            result = re.findall(p, text)
-                            result_params = result[0].split(",")
-
-                            if len(result_params) == len(params[k][0]):
-                                cFunctionList += otherFunctionList[i]
-                                CFunctionLists.append(
-                                    [w_key, w_name, "C" + str(c_count), otherFunctionList[i]])
-                                node_list.append("C" + str(c_count))
-
-                                for n in range(len(node_feature_list)):
-                                    if w_key in node_feature_list[n][0]:
-                                        node_feature_list[n][2].append("C" + str(c_count))
-
-                                node_feature_list.append(
-                                    ["C" + str(c_count), "C" + str(c_count), ["NULL"], 1])
-
-                                edge_list.append(["C" + str(c_count), w_key, "C" + str(c_count), 1, 'FW'])
-
-                                c_count += 1
-                                break
-
-        if c_count == 0:
-            print("There is no C node")
-            node_list.append("C0")
-            node_feature_list.append(["C0", "C0", ["NULL"], 0])
-            for n in range(len(node_feature_list)):
-                if "W" in node_feature_list[n][0]:
-                    node_feature_list[n][2] = ["NULL"]
-
-        # ======================================================================
-        # ---------------------------  Handle edge  ----------------------------
-        # ======================================================================
-
-        # (1) W -> S (include: W -> VAR, VAR -> S, S -> VAR)
-        for i in range(len(timeStampList)):
-            flag = 0
-            varCount = 0
-            var_time = ""
-            for j in range(len(timeStampList[i][0])):
-                text = timeStampList[i][0][j]
-
-                if 'block.timestamp' in text:
-                    tmp_sent = timeStampList[i][0][j]
-                    var_time = tmp_sent.split("=")[0]
-                    if "return" in text:
-                        edge_list.append(
-                            [timeStampList[i][2], "VAR" + str(varCount), timeStampList[i][2], 2,
-                             'RE'])
-                        edge_list.append(
-                            ["VAR" + str(varCount), timeStampList[i][1], "VAR" + str(varCount), 3,
-                             'RE'])
-                        node_feature_list.append(
-                            ["VAR" + str(varCount), "VAR" + str(varCount), timeStampList[i][2], 2, 'ASSIGN'])
-                        varCount += 1
-                    else:
-                        edge_list.append(
-                            [timeStampList[i][2], "VAR" + str(varCount), timeStampList[i][2], 2,
-                             'FW'])
-                        edge_list.append(
-                            ["VAR" + str(varCount), timeStampList[i][1], timeStampList[i][2], 3,
-                             'FW'])
-                        node_feature_list.append(
-                            ["VAR" + str(varCount), "VAR" + str(varCount), timeStampList[i][2], 3, 'ASSIGN'])
-                        varCount += 1
-                    flag += 1
-
-                if flag != 0 and var_time in text:
-                    edge_list.append(
-                        [timeStampList[i][1], "VAR" + str(varCount), timeStampList[i][2], 4, 'FW'])
-                    node_feature_list.append(
-                        ["VAR" + str(varCount), "VAR" + str(varCount), timeStampList[i][2], 3, 'DANGER'])
-                    varCount += 1
+                TimestampFlag1 += 1
+                VarTimestamp = text.split("=")[0]
+            elif 'block.timestamp' in text:
+                TimestampFlag2 += 1
+                if 'return' in text:
+                    node_feature_list.append(["VAR" + str(varFlag), "S" + str(i), 3, 'violation'])
+                    edge_list.append(["S" + str(i), "VAR" + str(varFlag), 2, 'RE'])
+                    node_list.append("VAR" + str(varFlag))
+                    varFlag += 1
                     break
+                if TimestampFlag1 == 0:
+                    if "assert" in text:
+                        edge_list.append(["S" + str(i), "VAR" + str(varFlag), 2, 'AH'])
+                    elif "require" in text:
+                        edge_list.append(["S" + str(i), "VAR" + str(varFlag), 2, 'RG'])
+                    elif "if" in text:
+                        edge_list.append(["S" + str(i), "VAR" + str(varFlag), 2, 'IF'])
+                    elif "for" in text:
+                        edge_list.append(["S" + str(i), "VAR" + str(varFlag), 2, 'FOR'])
+                    else:
+                        edge_list.append(["S" + str(i), "VAR" + str(varFlag), 2, 'FW'])
+
+                    var_node = 0
+                    for a in range(len(var_op_assign)):
+                        if var_op_assign[a] in text:
+                            node_feature_list.append(["VAR" + str(varFlag), "S" + str(i), 3, 'warning'])
+                            var_node += 1
+                            break
+                    if var_node == 0:
+                        node_feature_list.append(["VAR" + str(varFlag), "S" + str(i), 3, 'compliance'])
+
+                    node_list.append("VAR" + str(varFlag))
+                    varFlag += 1
+                    break
+            if TimestampFlag1 != 0 and TimestampFlag2 == 0:
+                if VarTimestamp != " " or "":
+                    if "return" in text and VarTimestamp in text:
+                        node_feature_list.append(["VAR" + str(varFlag), "S" + str(i), 3, 'violation'])
+                        edge_list.append(["S" + str(i), "VAR" + str(varFlag), 2, 'RE'])
+                        node_list.append("VAR" + str(varFlag))
+                        varFlag += 1
+                        break
+                    elif VarTimestamp in text:
+                        node_feature_list.append(["VAR" + str(varFlag), "S" + str(i), 3, 'warning'])
+                        if "assert" in text:
+                            edge_list.append(["S" + str(i), "VAR" + str(varFlag), 2, 'AH'])
+                        elif "require" in text:
+                            edge_list.append(["S" + str(i), "VAR" + str(varFlag), 2, 'RG'])
+                        elif "if" in text:
+                            edge_list.append(["S" + str(i), "VAR" + str(varFlag), 2, 'IF'])
+                        elif "for" in text:
+                            edge_list.append(["S" + str(i), "VAR" + str(varFlag), 2, 'FOR'])
+                        else:
+                            edge_list.append(["S" + str(i), "VAR" + str(varFlag), 2, 'FW'])
+                        node_list.append("VAR" + str(varFlag))
+                        varFlag += 1
+                        break
+                else:
+                    node_feature_list.append(["VAR" + str(varFlag), "S" + str(i), 3, 'compliance'])
+                    if "assert" in text:
+                        edge_list.append(["S" + str(i), "VAR" + str(varFlag), 2, 'AH'])
+                    elif "require" in text:
+                        edge_list.append(["S" + str(i), "VAR" + str(varFlag), 2, 'RG'])
+                    elif "if" in text:
+                        edge_list.append(["S" + str(i), "VAR" + str(varFlag), 2, 'IF'])
+                    elif "for" in text:
+                        edge_list.append(["S" + str(i), "VAR" + str(varFlag), 2, 'FOR'])
+                    else:
+                        edge_list.append(["S" + str(i), "VAR" + str(varFlag), 2, 'FW'])
+                    node_list.append("VAR" + str(varFlag))
+                    varFlag += 1
+                    break
+
+    if timeStampFlag == 0:
+        print("Currently, there is no key word block.timestamp")
+        node_feature_list.append(["S0", "NoLimit", ["NULL"], 0])
+        node_feature_list.append(["W0", "NoLimit", ["NULL"], 0])
+        node_feature_list.append(["VAR0", "NULL", 0, "compliance"])
+        edge_list.append(["W0", "S0", 0, 'FW'])
+        edge_list.append(["S0", "VAR0", 0, 'FW'])
 
     # Handling some duplicate elements, the filter leaves a unique
     edge_list = list(set([tuple(t) for t in edge_list]))
     edge_list = [list(v) for v in edge_list]
     node_feature_list_new = []
     [node_feature_list_new.append(i) for i in node_feature_list if not i in node_feature_list_new]
-    # node_feature_list = list(set([tuple(t) for t in node_feature_list]))
-    # node_feature_list = [list(v) for v in node_feature_list]
-    # node_list = list(set(node_list))
 
     return node_feature_list_new, edge_list
 
 
-def printResult(file, node_feature, edge_feature):
-    main_point = ['S', 'W0', 'W1', 'W2', 'W3', 'W4', 'C0', 'C1', 'C2', 'C3', 'C4']
+def outputResult(file, node_feature, edge_feature):
+    main_point = ['S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8', 'S9', 'S10', 'S11', 'S12', 'S13', 'S14', 'S15',
+                  'S16', 'S17',
+                  'W0', 'W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9', 'W10', 'W11', 'W12', 'W13', 'W14', 'W15',
+                  'W16', 'W17']
 
     for i in range(len(node_feature)):
         if node_feature[i][0] in main_point:
@@ -219,44 +217,67 @@ def printResult(file, node_feature, edge_feature):
 
             node_feature[i][2] = tmp
 
-    # nodeOutPath = "../../data/reentrancy/graph_data/nodes_12/" + file
-    # edgeOutPath = "../../data/reentrancy/graph_data/edges_12/" + file
+    nodeOutPath = "../../data/timestamp/node/" + file
+    edgeOutPath = "../../data/timestamp/edge/" + file
 
-    nodeOutPath = "../../tmp/node/" + file
-    edgeOutPath = "../../tmp/edge/" + file
+    node_feature1 = []
+    edge_feature1 = []
+    node_flag = 0
+    edge_flag = 0
+
+    for i in range(len(node_feature)):
+        for j in range(len(node_feature[i])):
+            if node_feature[i][j] in main_point:
+                node_flag = 1
+            elif node_flag == 0 and j + 1 == len(node_feature[i]):
+                node_feature1.append(node_feature[i])
+                node_flag = 0
+            elif j + 1 == len(node_feature[i]):
+                node_flag = 0
+
+    for i in range(len(edge_feature)):
+        for j in range(len(edge_feature[i])):
+            if edge_feature[i][j] in main_point:
+                edge_flag = 1
+            elif edge_flag == 0 and j + 1 == len(edge_feature[i]):
+                edge_feature1.append(edge_feature[i])
+                edge_flag = 0
+            elif j + 1 == len(edge_feature[i]):
+                edge_flag = 0
 
     f_node = open(nodeOutPath, 'a')
-    for i in range(len(node_feature)):
-        result = " ".join(np.array(node_feature[i]))
+    for i in range(len(node_feature1)):
+        result = " ".join(np.array(node_feature1[i]))
         f_node.write(result + '\n')
     f_node.close()
 
     f_edge = open(edgeOutPath, 'a')
-    for i in range(len(edge_feature)):
-        result = " ".join(np.array(edge_feature[i]))
-        print(result)
+    for i in range(len(edge_feature1)):
+        result = " ".join(np.array(edge_feature1[i]))
         f_edge.write(result + '\n')
     f_edge.close()
 
 
+
+
 if __name__ == "__main__":
-    test_contract = "../../data/block_timestamp/solidity_contract/20888.sol"
+    test_contract = "../../data/timestamp/solidity_contract/5400.sol"
     node_feature, edge_feature = generate_graph(test_contract)
     node_feature = sorted(node_feature, key=lambda x: (x[0]))
     edge_feature = sorted(edge_feature, key=lambda x: (x[2], x[3]))
     print("node_feature", node_feature)
     print("edge_feature", edge_feature)
-    # printResult("20888.sol", node_feature, edge_feature)
 
-    # inputFileDir = "../../data/reentrancy/contracts/"
+    # inputFileDir = "../../data/timestamp/solidity_contract/"
     # dirs = os.listdir(inputFileDir)
     # start_time = time.time()
     # for file in dirs:
+    #     print(file)
     #     inputFilePath = inputFileDir + file
     #     node_feature, edge_feature = generate_graph(inputFilePath)
     #     node_feature = sorted(node_feature, key=lambda x: (x[0]))
     #     edge_feature = sorted(edge_feature, key=lambda x: (x[2], x[3]))
-    #     printResult(file, node_feature, edge_feature)
+    #     outputResult(file, node_feature, edge_feature)
     #
     # end_time = time.time()
     # print(end_time - start_time)

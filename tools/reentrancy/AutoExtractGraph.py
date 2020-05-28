@@ -49,6 +49,14 @@ def split_function(filepath):
     return function_list
 
 
+# generate a potential fallback node
+def generate_potential_fallback_node(node_feature, edge_feature):
+    node_feature.append(["F", "F", "NoLimit", ["S"], 0, "MSG"])
+    edge_feature.append(["S", "F", "S", 0, "FW"])
+    edge_feature.append(["F", "W0", "F", 1, "FW"])
+    return node_feature, edge_feature
+
+
 # Position the call.value to generate the graph
 def generate_graph(filepath):
     allFunctionList = split_function(filepath)  # Store all functions
@@ -61,6 +69,7 @@ def generate_graph(filepath):
     edge_list = []  # Store edge and edge features
     node_feature_list = []  # Store nodes feature
     params = []  # Store the parameters of the W functions
+    param = []
     key_count = 0  # Number of core nodes S and W
     c_count = 0  # Number of core nodes C
 
@@ -85,19 +94,18 @@ def generate_graph(filepath):
             if '.call.value' in text:
                 node_list.append("S")
                 node_list.append("W" + str(key_count))
-                location_i, location_j = i, j
-                callValueList.append([allFunctionList[location_i], "S", "W" + str(key_count)])
+                callValueList.append([allFunctionList[i], "S", "W" + str(key_count)])
 
-                ss = allFunctionList[location_i][0]
-                p = re.compile(r'[(](.*?)[)]', re.S)
-                result = re.findall(p, ss)
+                # get the function name and params
+                ss = allFunctionList[i][0]
+                pp = re.compile(r'[(](.*?)[)]', re.S)
+                result = re.findall(pp, ss)
                 result_params = result[0].split(",")
 
-                params1 = []
                 for n in range(len(result_params)):
-                    params1.append(result_params[n].strip().split(" ")[-1])
+                    param.append(result_params[n].strip().split(" ")[-1])
 
-                params.append([params1, "S", "W" + str(key_count)])
+                params.append([param, "S", "W" + str(key_count)])
 
                 # Handling W function access restrictions, which can be used for access restriction properties
                 # default that there are C nodes
@@ -123,8 +131,8 @@ def generate_graph(filepath):
                             break
                         else:
                             param_count = 0
-                            for param in params1:
-                                if param in text and param != "":
+                            for pa in param:
+                                if pa in text and pa != "":
                                     param_count += 1
                                     node_feature_list.append(
                                         ["S", "S", "LimitedAC",
@@ -159,8 +167,8 @@ def generate_graph(filepath):
                              1, "NULL"])
                     else:
                         param_count = 0
-                        for param in params1:
-                            if param in text and param != "":
+                        for pa in param:
+                            if pa in text and pa != "":
                                 param_count += 1
                                 node_feature_list.append(
                                     ["S", "S", "NoLimit", ["W" + str(key_count)],
@@ -180,7 +188,7 @@ def generate_graph(filepath):
                 # For example: function transfer(address _to, uint _value, bytes _data, string _custom_fallback)
                 # get function name (transfer)
                 tmp = re.compile(r'\b([_A-Za-z]\w*)\b(?:(?=\s*\w+\()|(?!\s*\w+))')
-                result_withdraw = tmp.findall(allFunctionList[location_i][0])
+                result_withdraw = tmp.findall(allFunctionList[i][0])
                 withdrawNameTmp = result_withdraw[1]
                 if withdrawNameTmp == "payable":
                     withdrawName = withdrawNameTmp
@@ -248,7 +256,7 @@ def generate_graph(filepath):
 
         # (1) W->S (include: W->VAR, VAR->S, S->VAR)
         for i in range(len(callValueList)):
-            flag = 0  # flag: flag=0, before call.value; flag>0, after call.value
+            flag = 0  # flag: flag = 0, before call.value; flag > 0, after call.value
             before_var_count = 0
             after_var_count = 0
             var_tmp = []
@@ -259,7 +267,7 @@ def generate_graph(filepath):
                 if '.call.value' not in text:
                     if flag == 0:
                         # print("before call.value")
-                        # handle W->VAR
+                        # handle W -> VAR
                         for k in range(len(var_list)):
                             if var_list[k] in text:
                                 node_list.append("VAR" + str(before_var_count))
@@ -706,7 +714,7 @@ def generate_graph(filepath):
 
 
 def printResult(file, node_feature, edge_feature):
-    main_point = ['S', 'W0', 'W1', 'W2', 'W3', 'W4', 'C0', 'C1', 'C2', 'C3', 'C4']
+    main_point = ['S', 'W0', 'W1', 'W2', 'W3', 'W4', 'C0', 'C1', 'C2', 'C3', 'C4', 'F']
 
     for i in range(len(node_feature)):
         if node_feature[i][0] in main_point:
@@ -718,8 +726,8 @@ def printResult(file, node_feature, edge_feature):
 
             node_feature[i][3] = tmp
 
-    nodeOutPath = "../../data/reentrancy/graph_data/nodes_185_cleaned/" + file
-    edgeOutPath = "../../data/reentrancy/graph_data/edges_185_cleaned/" + file
+    nodeOutPath = "../../data/reentrancy/node/" + file
+    edgeOutPath = "../../data/reentrancy/edge/" + file
 
     f_node = open(nodeOutPath, 'a')
     for i in range(len(node_feature)):
@@ -734,24 +742,27 @@ def printResult(file, node_feature, edge_feature):
         f_edge.write(result + '\n')
     f_edge.close()
 
+    return node_feature, edge_feature
+
 
 if __name__ == "__main__":
-    # test_contract = "../../data/reentrancy/contract/1044.sol"
-    # node_feature, edge_feature = generate_graph(test_contract)
-    # node_feature = sorted(node_feature, key=lambda x: (x[0]))
-    # edge_feature = sorted(edge_feature, key=lambda x: (x[2], x[3]))
-    # print("node_feature", node_feature)
-    # print("edge_feature", edge_feature)
+    test_contract = "../../data/reentrancy/solidity_contract/cross-function-reentrancy.sol"
+    node_feature, edge_feature = generate_graph(test_contract)
+    node_feature = sorted(node_feature, key=lambda x: (x[0]))
+    edge_feature = sorted(edge_feature, key=lambda x: (x[2], x[3]))
+    node_feature, edge_feature = generate_potential_fallback_node(node_feature, edge_feature)
+    print("node_feature", node_feature)
+    print("edge_feature", edge_feature)
 
-    inputFileDir = "../../data/reentrancy/contract/"
-    dirs = os.listdir(inputFileDir)
-    start_time = time.time()
-    for file in dirs:
-        inputFilePath = inputFileDir + file
-        node_feature, edge_feature = generate_graph(inputFilePath)
-        node_feature = sorted(node_feature, key=lambda x: (x[0]))
-        edge_feature = sorted(edge_feature, key=lambda x: (x[2], x[3]))
-        printResult(file, node_feature, edge_feature)
-
-    end_time = time.time()
-    print(end_time - start_time)
+    # inputFileDir = "../../data/reentrancy/contracts/"
+    # dirs = os.listdir(inputFileDir)
+    # start_time = time.time()
+    # for file in dirs:
+    #     inputFilePath = inputFileDir + file
+    #     node_feature, edge_feature = generate_graph(inputFilePath)
+    #     node_feature = sorted(node_feature, key=lambda x: (x[0]))
+    #     edge_feature = sorted(edge_feature, key=lambda x: (x[2], x[3]))
+    #     printResult(file, node_feature, edge_feature)
+    #
+    # end_time = time.time()
+    # print(end_time - start_time)

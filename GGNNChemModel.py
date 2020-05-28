@@ -12,7 +12,6 @@ Options:
     --random_seed seed       Random seed
     --thresholds threshold   threshold
     --restore FILE           File to restore weights from.
-    --freeze-graph-model     Freeze weights of graph model components.
     -t                       output
 """
 from __future__ import print_function
@@ -22,6 +21,8 @@ from docopt import docopt
 from collections import defaultdict
 import numpy as np
 import tensorflow as tf
+
+print(tf.__version__)
 
 tf.enable_eager_execution()
 import sys, traceback
@@ -43,7 +44,7 @@ def bfs_visit(outgoing_edges: Dict[int, Sequence[int]], node_depths: Dict[int, i
         bfs_visit(outgoing_edges, node_depths, w, depth + 1)
 
 
-class AsyncGGNNChemModel(ChemModel):
+class GGNNChemModel(ChemModel):
     def __init__(self, args):
         super().__init__(args)
 
@@ -52,14 +53,14 @@ class AsyncGGNNChemModel(ChemModel):
         params = dict(super().default_params())
         params.update({
             'num_nodes': 100000,
-            'use_edge_bias': True,  # False->True
+            'use_edge_bias': False,  # False->True
 
             'propagation_rounds': 1,  # Has to be an even number(4), 4->1
             'propagation_substeps': 15,  # 15->20
 
-            'graph_rnn_cell': 'RNN',  # GRU or RNN
-            'graph_rnn_activation': 'tanh',  # tanh, ReLU
-            'graph_state_dropout_keep_prob': 0.8,  # 1.->0.5
+            'graph_rnn_cell': 'rnn',  # gru or rnn
+            'graph_rnn_activation': 'tanh',  # tanh, relu
+            'graph_state_dropout_keep_prob': 0.9,  # 1.->0.5
 
             'task_sample_ratios': {},
         })
@@ -69,16 +70,13 @@ class AsyncGGNNChemModel(ChemModel):
         h_dim = self.params['hidden_size']
         self.placeholders['initial_node_representation'] = tf.placeholder(tf.float32, [None, h_dim],
                                                                           name='node_features')
-        self.placeholders['core_node_representation'] = tf.placeholder(tf.float32, [None, h_dim],
-                                                                       name='core_node_features')
-        self.placeholders['final_core_node_representation'] = tf.placeholder(tf.float32, [None, h_dim],
-                                                                             name='final_core_node_features')
-        # Initial nodes I_{r}: Node IDs that will have no incoming edges in round r.
+
+        # Initial nodes I_{r}: Node IDs that will have no incoming edge in round r.
         self.placeholders['initial_nodes'] = [
             tf.placeholder(tf.int32, [None], name="initial_nodes_round%i" % prop_round)
             for prop_round in range(self.params['propagation_rounds'])]
 
-        # Sending nodes S_{r,s,e}: Source nodes ids of edges propagating in step s of round r.
+        # Sending nodes S_{r,s,e}: Source nodes ids of edge propagating in step s of round r.
         # Restrictions: If v in S_{r,s,e}, then v in R_{r,s'} for s' < s or v in I_{r}
         self.placeholders['sending_nodes'] = [[[tf.placeholder(tf.int32,
                                                                [None],
@@ -88,7 +86,7 @@ class AsyncGGNNChemModel(ChemModel):
                                                for step in range(self.params['propagation_substeps'])]
                                               for prop_round in range(self.params['propagation_rounds'])]
 
-        # Normalised edge target nodes T_{r,s}: Targets of edges propagating in step s of round r, normalised to a
+        # Normalised edge target nodes T_{r,s}: Targets of edge propagating in step s of round r, normalised to a
         # continuous range starting from 0. This is used for aggregating messages from the sending nodes.
         self.placeholders['msg_targets'] = [[tf.placeholder(tf.int32,
                                                             [None],
@@ -114,9 +112,6 @@ class AsyncGGNNChemModel(ChemModel):
                                                    for prop_round in range(self.params['propagation_rounds'])]
 
         self.placeholders['graph_nodes_list'] = tf.placeholder(tf.int32, [None], name='graph_nodes_list')
-        self.placeholders['graph_index_list'] = tf.placeholder(tf.int32, [None], name='graph_index_list')
-        self.placeholders['graph_nodeNum_list'] = tf.placeholder(tf.int32, [None], name='graph_nodeNum_list')
-        self.placeholders['graph_core_nodes_list'] = tf.placeholder(tf.float32, [None], name='graph_core_nodes_list')
         self.placeholders['graph_state_keep_prob'] = tf.placeholder(tf.float32, None, name='graph_state_keep_prob')
 
         activation_name = self.params['graph_rnn_activation'].lower()
@@ -223,9 +218,9 @@ class AsyncGGNNChemModel(ChemModel):
                     old_receiving_node_states = tf.gather(cur_node_states, substep_receiving_nodes)
                     aggregated_received_messages.set_shape([None, self.params['hidden_size']])
                     old_receiving_node_states.set_shape([None, self.params['hidden_size']])
-                    substep_new_node_states = \
-                        self.weights['rnn_cells'](aggregated_received_messages, old_receiving_node_states)[1]
-                    # substep_new_node_states = tf.add(aggregated_received_messages,old_receiving_node_states)
+                    # substep_new_node_states = \
+                    #     self.weights['rnn_cells'](aggregated_received_messages, old_receiving_node_states)[1]
+                    substep_new_node_states = tf.add(aggregated_received_messages,old_receiving_node_states)
                     # Write updated states back:
                     new_node_states_ta = new_node_states_ta.scatter(substep_receiving_nodes, substep_new_node_states)
                     return substep_id + 1, new_node_states_ta
@@ -245,10 +240,6 @@ class AsyncGGNNChemModel(ChemModel):
     def gated_regression(self, last_h, regression_gate, regression_transform):
         # last_h: [v x h]
 
-        def zy_generate_core_node_representation(input_ta, graph_index_list, graph_nodeNum_list):
-            new_input_ta = tf.nn.embedding_lookup(input_ta, graph_index_list)
-            return new_input_ta
-
         gate_input = tf.concat([last_h, self.placeholders['initial_node_representation']], axis=-1)  # [v x 2h]
         gated_outputs = tf.nn.sigmoid(regression_gate(gate_input)) * regression_transform(last_h)  # [v x 1] new_last_h
 
@@ -258,7 +249,7 @@ class AsyncGGNNChemModel(ChemModel):
                                                         num_segments=self.placeholders['num_graphs'])  # [g x 1]
         # output2=self.placeholders['graph_nodes_list']
         return tf.squeeze(
-            graph_representations), graph_representations
+            graph_representations), graph_representations, self.placeholders['initial_node_representation']
 
     # ----- Data preprocessing and chunking into minibatches:
     def process_raw_graphs(self, raw_data: Sequence[Any], is_training_data: bool) -> Any:
@@ -269,25 +260,18 @@ class AsyncGGNNChemModel(ChemModel):
             db = []
             print("count: ", count)
 
-            Z = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-            zy_i = 0
             for nf in d["node_features"]:
-                # if (zy_i < 3):
-                #     db.append(nf)
-                # else:
-                #     db.append(Z)
-                # zy_i += 1
                 db.append(nf)
 
             prop_schedules = self.__graph_to_propagation_schedules(d['graph'])
             processed_graphs.append({"init": d["node_features"],
-                                     "core": db,
+                                     'contract_n': d['contract_name'],
                                      "prop_schedules": prop_schedules,
                                      "target_values": [d["targets"][task_id][0] for task_id in
                                                        self.params['task_ids']]})
 
         if is_training_data:
-            np.random.shuffle(processed_graphs)
+            # np.random.shuffle(processed_graphs)
             for task_id in self.params['task_ids']:
                 task_sample_ratio = self.params['task_sample_ratios'].get(str(task_id))
                 if task_sample_ratio is not None:
@@ -333,26 +317,27 @@ class AsyncGGNNChemModel(ChemModel):
             -> List[Tuple[np.ndarray, List[List[np.ndarray]], List[List[np.ndarray]], List[np.ndarray]]]:
         num_incoming_edges = defaultdict(lambda: 0)
         outgoing_edges = defaultdict(lambda: [])
-        # Compute number of incoming edges per nodes, and build adjacency lists:
+        # Compute number of incoming edge per nodes, and build adjacency lists:
         for (v, typ, w) in graph:
-            num_incoming_edges[v] += 1  # zy: why edges are added on both sides??
+            num_incoming_edges[v] += 1  # zy: why edge are added on both sides??
             num_incoming_edges[w] += 1
             edge_bwd_typ = typ if self.params['tie_fwd_bkwd'] else self.num_edge_types + typ  # zy: what's this for
             outgoing_edges[v].append((v, typ, w))
             outgoing_edges[w].append((w, edge_bwd_typ, v))
 
-        # Sort them, pick nodes with lowest number of incoming edges:
+        # Sort them, pick nodes with lowest number of incoming edge:
         tensorised_prop_schedules = []
         for prop_round in range(int(self.params[
                                         'propagation_rounds'])):  # propagation_rounds=1 #for prop_round in range(int(self.params['propagation_rounds'] / 2)):
             dag_seed = min(num_incoming_edges.items(), key=lambda t: t[1])[prop_round]
             node_depths = {}
+
             # bfs_visit(outgoing_edges, node_depths, dag_seed, 0)
 
             for _, deepvalue in enumerate(num_incoming_edges):
                 node_depths[deepvalue] = deepvalue
 
-            # Now split edges into forward/backward sets, by using their depths.
+            # Now split edge into forward/backward sets, by using their depths.
             # Intuitively, a nodes with depth h will get updated in step h.
             max_depth = max(node_depths.values())
             assert (max_depth <= self.params['propagation_substeps'])
@@ -379,8 +364,8 @@ class AsyncGGNNChemModel(ChemModel):
 
     def make_minibatch_iterator(self, data: Any, is_training: bool):
         """Create minibatches by flattening graphs into a single one with multiple disconnected components."""
-        if is_training:
-            np.random.shuffle(data)
+        # if is_training:
+        #     np.random.shuffle(data)
         dropout_keep_prob = self.params['graph_state_dropout_keep_prob'] if is_training else 1.
 
         # Pack until we cannot fit more graphs in the batch
@@ -388,13 +373,9 @@ class AsyncGGNNChemModel(ChemModel):
         while num_graphs < len(data):
             num_graphs_in_batch = 0
             batch_node_features = []
-            zy_batch_node_features = []
             batch_target_task_values = []
             batch_target_task_mask = []
             batch_graph_nodes_list = []
-            batch_graph_index_list = []
-            batch_core_nodes_list = []
-            batch_graph_nodeNum_list = []
             node_offset = 0
 
             # Collect all indices; we'll strip out the batch dimension with a np.concatenate along that axis at the end:
@@ -425,25 +406,10 @@ class AsyncGGNNChemModel(ChemModel):
                 padded_features = np.pad(cur_graph['init'],
                                          ((0, 0), (0, self.params['hidden_size'] - self.annotation_size)),
                                          'constant')
-                zy_padded_features = np.pad(cur_graph['core'],
-                                            ((0, 0), (0, self.params['hidden_size'] - self.annotation_size)),
-                                            'constant')
                 batch_node_features.extend(padded_features)
-                zy_batch_node_features.extend(zy_padded_features)
 
                 batch_graph_nodes_list.append(
                     np.full(shape=[num_nodes_in_graph], fill_value=num_graphs_in_batch, dtype=np.int32))
-
-                batch_graph_index_list.append(
-                    np.full(shape=[num_nodes_in_graph], fill_value=node_offset, dtype=np.int32))
-
-                for zy_i in range(3):
-                    batch_core_nodes_list.append(np.full(shape=[1], fill_value=1, dtype=np.int32))
-
-                for zy_k in range(num_nodes_in_graph - 3):
-                    batch_core_nodes_list.append(np.full(shape=[1], fill_value=0, dtype=np.int32))
-
-                batch_graph_nodeNum_list.append(num_nodes_in_graph)
 
                 # Combine the different propagation schedules:
                 for prop_round in range(self.params['propagation_rounds']):
@@ -486,11 +452,7 @@ class AsyncGGNNChemModel(ChemModel):
 
             batch_feed_dict = {
                 self.placeholders['initial_node_representation']: np.array(batch_node_features),
-                self.placeholders['core_node_representation']: np.array(zy_batch_node_features),
                 self.placeholders['graph_nodes_list']: np.concatenate(batch_graph_nodes_list, axis=0),
-                self.placeholders['graph_index_list']: np.concatenate(batch_graph_index_list, axis=0),
-                self.placeholders['graph_nodeNum_list']: batch_graph_nodeNum_list,
-                self.placeholders['graph_core_nodes_list']: np.concatenate(batch_core_nodes_list, axis=0),
                 self.placeholders['target_values']: np.transpose(batch_target_task_values, axes=[1, 0]),
                 self.placeholders['target_mask']: np.transpose(batch_target_task_mask, axes=[1, 0]),
                 self.placeholders['num_graphs']: num_graphs_in_batch,
@@ -544,7 +506,7 @@ class AsyncGGNNChemModel(ChemModel):
 def main():
     args = docopt(__doc__)
     try:
-        model = AsyncGGNNChemModel(args)
+        model = GGNNChemModel(args)
         model.train()
     except:
         typ, value, tb = sys.exc_info()

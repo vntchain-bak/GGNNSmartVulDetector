@@ -12,8 +12,6 @@ import random
 
 from utils import MLP, ThreadedIterator
 
-print(tf.__version__)
-
 
 class ChemModel(object):
     @classmethod
@@ -22,24 +20,23 @@ class ChemModel(object):
             'num_epochs': 200,
             'patience': 150,
             'learning_rate': 0.002,
-            'clamp_gradient_norm': 1,  # 1.0->0.8
-            'out_layer_dropout_keep_prob': 0.8,  # 1.0->0.8
+            'clamp_gradient_norm': 0.9,  # 1.0->0.8
+            'out_layer_dropout_keep_prob': 0.9,  # 1.0->0.8
 
-            'hidden_size': 256,  # 256/512/1024/2048
-            'num_timesteps': 4,  # 4->6
+            'hidden_size': 250,  # 256/512/1024/2048
             'use_graph': True,
 
             'tie_fwd_bkwd': False,  # True->False
             'task_ids': [0],
 
-            # 'random_seed': 6600,
-            # 'threshold': 0.5,
+            'train_file': 'train_data/reentrancy/train.json',
+            'valid_file': 'train_data/reentrancy/valid.json'
 
-            'train_file': 'train_data/reentrancy/train_corenodes.json',
-            'valid_file': 'train_data/reentrancy/valid_corenodes.json'
+            # 'train_file': 'train_data/timestamp/train.json',
+            # 'valid_file': 'train_data/timestamp/valid.json'
 
-            # 'train_file': 'train_data/infinite_loop/train_corenodes.json',
-            # 'valid_file': 'train_data/infinite_loop/valid_corenodes.json'
+            # 'train_file': 'train_data/loops/train.json',
+            # 'valid_file': 'train_data/loops/valid.json'
         }
 
     def __init__(self, args):
@@ -53,10 +50,10 @@ class ChemModel(object):
 
         # random_seed = None
         random_seed = args.get('--random_seed')
-        self.random_seed = int(9930)
+        self.random_seed = int(random_seed)
 
         threshold = args.get('--thresholds')
-        self.threshold = float(0.352)
+        self.threshold = float(threshold)
 
         self.run_id = "_".join([time.strftime("%Y-%m-%d-%H-%M-%S"), str(os.getpid())])
         log_dir = args.get('--log_dir') or '.'
@@ -168,9 +165,11 @@ class ChemModel(object):
                     self.weights['regression_transform_task%i' % task_id] = MLP(self.params['hidden_size'], 1, [],
                                                                                 self.placeholders[
                                                                                     'out_layer_dropout_keep_prob'])
-                computed_values, sigm_val = self.gated_regression(self.ops['final_node_representations'],
-                                                                  self.weights['regression_gate_task%i' % task_id],
-                                                                  self.weights['regression_transform_task%i' % task_id])
+                computed_values, sigm_val, initial_re = self.gated_regression(self.ops['final_node_representations'],
+                                                                              self.weights[
+                                                                                  'regression_gate_task%i' % task_id],
+                                                                              self.weights[
+                                                                                  'regression_transform_task%i' % task_id])
 
                 def f(x):
                     x = 1 * x
@@ -186,7 +185,8 @@ class ChemModel(object):
                 a = tf.py_func(f, [a], tf.float32)
                 correct_pred = tf.equal(a, self.placeholders['target_values'][internal_id, :])
                 self.ops['new_computed_values'] = new_computed_values
-                self.ops['sigm_val'] = sigm_val
+                self.ops['sigm_val'] = sigm_val  # QP:graph feature
+                self.ops['initial_re'] = initial_re  # QP:inital nodes
                 self.ops['accuracy_task%i' % task_id] = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
 
                 b = tf.multiply(self.placeholders['target_values'][internal_id, :], 2)
@@ -257,7 +257,7 @@ class ChemModel(object):
 
         raise Exception("Models have to implement make_minibatch_iterator!")
 
-    def run_epoch(self, epoch_name: str, data, is_training: bool):
+    def run_epoch(self, epoch_name: str, data, epoch, is_training: bool):
         chemical_accuracies = np.array([0.066513725, 0.012235489, 0.071939046, 0.033730778, 0.033486113, 0.004278493,
                                         0.001330901, 0.004165489, 0.004128926, 0.00409976, 0.004527465, 0.012292586,
                                         0.037467458])
@@ -285,8 +285,33 @@ class ChemModel(object):
                 [self.ops['sigm_Recall'], self.ops['sigm_Precision'], self.ops['sigm_F1'], self.ops['sigm_FPR']],
                 feed_dict=batch_data)
 
+            # output the feature vectors (QP)
+            if epoch == 150 and is_training is True:
+                var_fn = self.sess.run([self.ops['sigm_val']], feed_dict=batch_data)
+
+                ss = tf.unsorted_segment_sum(data=self.ops['final_node_representations'],
+                                             segment_ids=self.placeholders['graph_nodes_list'],
+                                             num_segments=self.placeholders['num_graphs'])
+                var_finial_node = self.sess.run([ss], feed_dict=batch_data)
+                np.savetxt("./features/loops/loops_no_model_final_train.txt", var_finial_node[0], fmt="%.6f")
+                # print("graph representation: {}".format(var_fn))
+                print("type: {}  length: {}".format(type(var_fn), len(var_fn)))
+            elif epoch == 150 and is_training is not True:
+                var_fn = self.sess.run([self.ops['sigm_val']], feed_dict=batch_data)
+                ss = tf.unsorted_segment_sum(data=self.ops['final_node_representations'],
+                                             segment_ids=self.placeholders['graph_nodes_list'],
+                                             num_segments=self.placeholders['num_graphs'])
+                var_finial_node = self.sess.run([ss], feed_dict=batch_data)
+                np.savetxt("./features/loops/loops_no_model_final_valid.txt", var_finial_node[0], delimiter=", ",
+                           fmt="%.6f")
+                # print("graph representation: {}".format(var_fn))
+                print("type: {}  length: {}".format(type(var_fn), len(var_fn)))
+
             result = self.sess.run(fetch_list, feed_dict=batch_data)
-            (batch_loss, batch_accuracies) = (result[0], result[1])
+            if is_training:
+                (batch_loss, batch_accuracies) = (result[0], result[1])
+            else:
+                (batch_loss, batch_accuracies) = (result[0], result[1])
             loss += batch_loss * num_graphs
             accuracies.append(np.array(batch_accuracies) * num_graphs)
 
@@ -326,7 +351,7 @@ class ChemModel(object):
                 train_start = time.time()
                 self.num_graph = self.train_num_graph
                 train_loss, train_accs, train_errs, train_speed = self.run_epoch("epoch %i (training)" % epoch,
-                                                                                 self.train_data, True)
+                                                                                 self.train_data, epoch, True)
                 accs_str = " ".join(["%i:%.5f" % (id, acc) for (id, acc) in zip(self.params['task_ids'], train_accs)])
                 errs_str = " ".join(["%i:%.5f" % (id, err) for (id, err) in zip(self.params['task_ids'], train_errs)])
                 print("\r\x1b[K Train: loss: %.5f | acc: %s | error_ratio: %s | instances/sec: %.2f" % (train_loss,
@@ -339,7 +364,7 @@ class ChemModel(object):
                 valid_start = time.time()
                 self.num_graph = self.valid_num_graph
                 valid_loss, valid_accs, valid_errs, valid_speed = self.run_epoch("epoch %i (validation)" % epoch,
-                                                                                 self.valid_data, False)
+                                                                                 self.valid_data, epoch, False)
                 accs_str = " ".join(["%i:%.5f" % (id, acc) for (id, acc) in zip(self.params['task_ids'], valid_accs)])
                 errs_str = " ".join(["%i:%.5f" % (id, err) for (id, err) in zip(self.params['task_ids'], valid_errs)])
                 print("\r\x1b[K Valid: loss: %.5f | acc: %s | error_ratio: %s | instances/sec: %.2f" % (valid_loss,
@@ -360,16 +385,16 @@ class ChemModel(object):
                 }
                 log_to_save.append(log_entry)
 
-                val_acc = np.sum(valid_accs)  # type: float
-                if val_acc < best_val_acc:
-                    print("  (Best epoch so far, cum. val. acc decreased to %.5f from %.5f. Saving to '%s')" % (
-                        val_acc, best_val_acc, self.best_model_file))
-                    best_val_acc = val_acc
-                    best_val_acc_epoch = epoch
-                elif epoch - best_val_acc_epoch >= self.params['patience']:
-                    print("Stopping training after %i epochs without improvement on validation accuracy." % self.params[
-                        'patience'])
-                    break
+                # val_acc = np.sum(valid_accs)  # type: float
+                # if val_acc < best_val_acc:
+                #     print("  (Best epoch so far, cum. val. acc decreased to %.5f from %.5f. Saving to '%s')" % (
+                #         val_acc, best_val_acc, self.best_model_file))
+                #     best_val_acc = val_acc
+                #     best_val_acc_epoch = epoch
+                # elif epoch - best_val_acc_epoch >= self.params['patience']:
+                #     print("Stopping training after %i epochs without improvement on validation accuracy." % self.params[
+                #         'patience'])
+                #     break
 
             print(max(val_acc1))
 

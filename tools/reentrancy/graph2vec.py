@@ -1,35 +1,38 @@
+import os
+import json
 import numpy as np
-from reentrancy.vec2onehot import vec2onehot
+from reentrancy.vec2onehot_tmp import vec2onehot
 
 """
-encode: represent the corresponding number of every dict.
-embedding: represent the one_hot of nodes and edge.
+S, W, C features: Node features + Edge features + Var features;
+Node self property + Incoming Var + Outgoing Var + Incoming Edge + Outgoing Edge
 """
 
 dict_AC = {"NULL": 0, "LimitedAC": 1, "NoLimit": 2}
 
-dict_NodeName = {"NULL": 0, "VAR0": 1, "VAR1": 2, "VAR2": 3, "VAR3": 4, "VAR4": 5, "S0": 6, "S1": 7, "S2": 8, "S3": 9,
-                 "S4": 10, "S5": 11, "W0": 12, 'W1': 13, 'W2': 14, 'W3': 15, 'W4': 16, 'W5': 17, 'W6': 18, 'W7': 19,
-                 "C0": 20, 'C1': 21, 'C2': 22, 'C3': 23, 'C4': 24, 'C5': 25, 'C6': 27, 'C7': 28, 'MSG': 29}
+dict_NodeName = {"NULL": 0, "VAR0": 1, "VAR1": 2, "VAR2": 3, "VAR3": 4, "VAR4": 5, "VAR5": 6, "S": 7, "W0": 8,
+                 "W1": 9, "W2": 10, "W3": 11, "W4": 12, "C0": 13, "C1": 14, "C2": 15, "C3": 16, "C4": 17}
 
-dict_VarOpName = {"NULL": 0, "BOOL": 1, "ASSIGN": 2, "INCRT": 3, "DECRT": 4}
+dict_VarOpName = {"NULL": 0, "BOOL": 1, "ASSIGN": 2}
 
-dict_EdgeOpName = {"NULL": 0, "FW": 1, "READ": 2, "IF": 3, "GB": 4, "GN": 5, "WHILE": 6, "DW": 7, "FOR": 8, "DF": 9,
-                   "BREAK": 10, "CONTI": 11, "RE": 12, "AH": 13, "RG": 14, "RH": 15, "IT": 16}
+dict_EdgeOpName = {"NULL": 0, "FW": 1, "IF": 2, "GB": 3, "GN": 4, "WHILE": 5, "FOR": 6, "RE": 7, "AH": 8, "RG": 9,
+                   "RH": 10, "IT": 11}
 
-dict_AllOpName = {"NULL": 0, "FW": 1, "READ": 2, "ASSIGN": 3, "INCRT": 4, "DECRT": 5, "BOOL": 6, "IF": 7, "GB": 8,
-                  "GN": 9, "WHILE": 10, "DW": 11, "FOR": 12, "DF": 13, "BREAK": 14, "CONTI": 15, "RE": 16, "ASSERT": 17,
-                  "RG": 18, "REVERT": 19, "IT": 20}
+dict_AllOpName = {"NULL": 0, "FW": 1, "ASSIGN": 2, "BOOL": 3, "IF": 4, "GB": 5, "GN": 6, "WHILE": 7, "FOR": 8, "RE": 9,
+                  "AH": 10, "RG": 11, "RH": 12, "IT": 13}
 
 dict_NodeOpName = {"NULL": 0, "MSG": 1, "INNADD": 2}
 
-dict_ConName = {"NULL": 0, "ARG1": 1, "ARG2": 2, "ARG3": 3, "CON1": 4, "CON2": 5, "CON3": 6, "CNS1": 7,
-                "CNS2": 8, "CNS3": 9}
+dict_ConName = {"NULL": 0, "ARG1": 1, "ARG2": 2, "ARG3": 3, "CON1": 4, "CON2": 5, "CON3": 6, "CNS1": 7, "CNS2": 8,
+                "CNS3": 9}
+
+node_convert = {"S": 0, "W0": 1, "C0": 2, "W1": 3, "C1": 4, "W2": 5, "C2": 6, "W3": 7, "C3": 8, "W4": 9, "C4": 10,
+                "VAR0": 0, "VAR1": 1, "VAR2": "VAR2", "VAR3": "VAR3", "VAR4": "VAR4", "VAR5": "VAR5"}
 
 v2o = vec2onehot()  # create the one-bot dicts
 
 
-# extract the features of each nodes from input file #
+# extract the features of each node from input file #
 def extract_node_features(nodeFile):
     nodeNum = 0
     node_list = []
@@ -56,63 +59,35 @@ def extract_node_features(nodeFile):
 
 
 # elimination procedure for sub_graph Start here #
-def elimination_node(nodeNum, node_list, node_attribute_list):
-    node_encode = np.zeros(shape=(nodeNum + 1, 10, 5))
+def elimination_node(node_attribute_list):
+    main_point = ['S', 'W0', 'W1', 'W2', 'W3', 'W4', 'C0', 'C1', 'C2', 'C3', 'C4', 'F']
     extra_var_list = []  # extract var with low priority
     for i in range(0, len(node_attribute_list)):
-        if i + 1 < len(node_attribute_list):
-            if node_attribute_list[i][1] == node_attribute_list[i + 1][1]:
-                loc1 = int(node_attribute_list[i][3])  # relative location
-                op1 = node_attribute_list[i][4]  # operation
-                loc2 = int(node_attribute_list[i + 1][3])
-                op2 = node_attribute_list[i + 1][4]
-                if loc2 - loc1 == 1:
-                    op1_index = dict_VarOpName[op1]
-                    op2_index = dict_VarOpName[op2]
-                    # extract nodes attribute based on priority
-                    if op1_index < op2_index:
-                        extra_var_list.append(node_attribute_list.pop(i))
-                    else:
-                        extra_var_list.append(node_attribute_list.pop(i + 1))
-    return node_attribute_list, extra_var_list
-
-
-def elimination_multiple_node(nodeNum, node_list, node_attribute_list):
-    extra_var_list = []  # extract var with low priority
-
-    for i in range(0, len(node_attribute_list)):
-        if i + 1 < len(node_attribute_list):
-            if node_attribute_list[i][1] == node_attribute_list[i + 1][1]:
-                loc1 = int(node_attribute_list[i][3])  # relative location
-                op1 = node_attribute_list[i][4]  # operation
-                loc2 = int(node_attribute_list[i + 1][3])
-                op2 = node_attribute_list[i + 1][4]
-                if loc2 - loc1 == 1:
-                    op1_index = dict_VarOpName[op1]
-                    op2_index = dict_VarOpName[op2]
-                    # extract nodes attribute based on priority
-                    if op1_index < op2_index:
-                        extra_var_list.append(node_attribute_list.pop(i))
-                    else:
-                        extra_var_list.append(node_attribute_list.pop(i + 1))
-                else:
-                    pass
-            else:
-                pass
-        else:
-            pass
-
+        if node_attribute_list[i][1] not in main_point:
+            if i + 1 < len(node_attribute_list):
+                if node_attribute_list[i][1] == node_attribute_list[i + 1][1]:
+                    loc1 = int(node_attribute_list[i][3])  # relative location
+                    op1 = node_attribute_list[i][4]  # operation
+                    loc2 = int(node_attribute_list[i + 1][3])
+                    op2 = node_attribute_list[i + 1][4]
+                    if loc2 - loc1 == 1:
+                        op1_index = dict_VarOpName[op1]
+                        op2_index = dict_VarOpName[op2]
+                        # extract node attribute based on priority
+                        if op1_index < op2_index:
+                            extra_var_list.append(node_attribute_list.pop(i))
+                        else:
+                            extra_var_list.append(node_attribute_list.pop(i + 1))
     return node_attribute_list, extra_var_list
 
 
 def embedding_node(node_attribute_list):
-    # embedding each nodes after elimination #
+    # embedding each node after elimination #
     node_encode = []
     var_encode = []
     node_embedding = []
     var_embedding = []
-    main_point = ['S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'W0', 'W1', 'W2', 'W3', 'W4', 'W5', 'C0', 'C1', 'C2',
-                  'C3', 'C4', 'C5']
+    main_point = ['S', 'W0', 'W1', 'W2', 'W3', 'W4', 'C0', 'C1', 'C2', 'C3', 'C4', 'F']
 
     for j in range(0, len(node_attribute_list)):
         v = node_attribute_list[j][0]
@@ -122,8 +97,18 @@ def embedding_node(node_attribute_list):
             vfm1 = v2o.node2vecEmbedding(node_attribute_list[j][1])
             vf2 = dict_AC[node_attribute_list[j][2]]
             vfm2 = v2o.nodeAC2vecEmbedding(node_attribute_list[j][2])
-            vf3 = dict_NodeName[node_attribute_list[j][3]]
-            vfm3 = v2o.node2vecEmbedding(node_attribute_list[j][3])
+
+            result = node_attribute_list[j][3].split(",")
+            for call_vec in range(len(result)):
+                if call_vec + 1 < len(result):
+                    tmp_vf = str(dict_NodeName[result[call_vec]]) + "," + str(dict_NodeName[result[call_vec + 1]])
+                    tmp_vfm = np.array(list(v2o.node2vecEmbedding(result[call_vec]))) ^ np.array(
+                        list(v2o.node2vecEmbedding(result[call_vec + 1])))
+                elif len(result) == 1:
+                    tmp_vf = dict_NodeName[result[call_vec]]
+                    tmp_vfm = v2o.node2vecEmbedding(result[call_vec])
+            vf3 = tmp_vf
+            vfm3 = tmp_vfm
             vf4 = int(node_attribute_list[j][4])
             vfm4 = v2o.sn2vecEmbedding(node_attribute_list[j][4])
             vf5 = dict_NodeOpName[node_attribute_list[j][5]]
@@ -154,8 +139,8 @@ def embedding_node(node_attribute_list):
 
 def elimination_edge(edgeFile):
     # eliminate edge #
-    edge_list = []  # all edges
-    extra_edge_list = []  # eliminated edges
+    edge_list = []  # all edge
+    extra_edge_list = []  # eliminated edge
 
     f = open(edgeFile)
     lines = f.readlines()
@@ -165,11 +150,11 @@ def elimination_edge(edgeFile):
         edge = list(map(str, line.split()))
         edge_list.append(edge)
 
-    # The ablation of multiple edges between two nodes, taking the edge with the edge_operation priority
+    # The ablation of multiple edge between two nodes, taking the edge with the edge_operation priority
     for k in range(0, len(edge_list)):
         if k + 1 < len(edge_list):
-            start1 = edge_list[k][0]  # start nodes
-            end1 = edge_list[k][1]  # end nodes
+            start1 = edge_list[k][0]  # start node
+            end1 = edge_list[k][1]  # end node
             op1 = edge_list[k][4]
             start2 = edge_list[k + 1][0]
             end2 = edge_list[k + 1][1]
@@ -186,37 +171,14 @@ def elimination_edge(edgeFile):
     return edge_list, extra_edge_list
 
 
-def elimination_edge_multiple_node(edgeFile):
-    # eliminate edge #
-    edge_list = []  # all edges
-
-    f = open(edgeFile)
-    lines = f.readlines()
-    f.close()
-
-    for line in lines:
-        edge = list(map(str, line.split()))
-        edge_list.append(edge)
-
-    # Multiple points point to the same point, and the side is fused
-    for k in range(0, len(edge_list)):
-        if k + 1 < len(edge_list):
-            end1 = edge_list[k][1]  # end nodes
-            end2 = edge_list[k + 1][1]
-            print(end1, end2)
-
-            if end1 == end2:
-                print("Vector ablation")
-
-
 def embedding_edge(edge_list):
     # extract & embedding the features of each edge from input file #
     edge_encode = []
     edge_embedding = []
 
     for k in range(len(edge_list)):
-        start = edge_list[k][0]  # start nodes
-        end = edge_list[k][1]  # end nodes
+        start = edge_list[k][0]  # start node
+        end = edge_list[k][1]  # end node
         a, b, c = edge_list[k][2], edge_list[k][3], edge_list[k][4]  # origin info
 
         ef1 = dict_NodeName[a]
@@ -236,9 +198,9 @@ def embedding_edge(edge_list):
     return edge_encode, edge_embedding
 
 
-def construct_var_edge_vec(edge_list, node_embedding, var_embedding, edge_embedding):
+def construct_vec(edge_list, node_embedding, var_embedding, edge_embedding, edge_encode):
     # Vec: Node self property + Incoming Var + Outgoing Var + Incoming Edge + Outgoing Edge
-    print("Start constructing nodes vector...")
+    print("Start constructing node vector...")
     var_in_node = []
     var_in = []
     var_out_node = []
@@ -248,15 +210,26 @@ def construct_var_edge_vec(edge_list, node_embedding, var_embedding, edge_embedd
     edge_out_node = []
     edge_out = []
     node_vec = []
-    S_point = ['S0', 'S1', 'S2', 'S3', 'S4', 'S5']
-    W_point = ['W0', 'W1', 'W2', 'W3', 'W4', 'W5']
-    C_point = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5']
-    main_point = ['S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'W0', 'W1', 'W2', 'W3', 'W4', 'W5', 'C0', 'C1', 'C2',
-                  'C3', 'C4', 'C5']
-    node_embeddings_dim = 350
+    F_point = ['F']
+    S_point = ['S']
+    W_point = ['W0', 'W1', 'W2', 'W3', 'W4']
+    C_point = ['C0', 'C1', 'C2', 'C3', 'C4']
+    main_point = ['S', 'W0', 'W1', 'W2', 'W3', 'W4', 'C0', 'C1', 'C2', 'C3', 'C4', 'F']
+    node_embedding_dim_without_edge = 250
 
     if len(var_embedding) > 0:
         for k in range(len(edge_embedding)):
+            if edge_list[k][0] in F_point:
+                for i in range(len(var_embedding)):
+                    if str(var_embedding[i][0]) == str(edge_embedding[k][1]):
+                        var_out.append([edge_embedding[k][0], var_embedding[i][1]])
+                        edge_out.append([edge_embedding[k][0], edge_embedding[k][2]])
+            elif edge_list[k][1] in F_point:
+                for i in range(len(var_embedding)):
+                    if str(var_embedding[i][0]) == str(edge_embedding[k][0]):
+                        var_in.append([edge_embedding[k][1], var_embedding[i][1]])
+                        edge_in.append([edge_embedding[k][1], edge_embedding[k][2]])
+
             if edge_list[k][0] in C_point:
                 for i in range(len(var_embedding)):
                     if str(var_embedding[i][0]) == str(edge_embedding[k][1]):
@@ -282,9 +255,13 @@ def construct_var_edge_vec(edge_list, node_embedding, var_embedding, edge_embedd
 
             elif edge_list[k][0] in S_point:
                 S_OUT = []
+                S_OUT_Flag = 0
                 for i in range(len(var_embedding)):
                     if str(var_embedding[i][0]) == str(edge_embedding[k][1]):
                         S_OUT.append(var_embedding[i][1])
+                        S_OUT_Flag = 1
+                if S_OUT_Flag != 1:
+                    S_OUT.append(np.zeros(len(var_embedding[0][1]), dtype=int))
                 var_out.append([edge_embedding[k][0], S_OUT[0]])
                 edge_out.append([edge_embedding[k][0], edge_embedding[k][2]])
             elif edge_list[k][1] in S_point:
@@ -294,10 +271,15 @@ def construct_var_edge_vec(edge_list, node_embedding, var_embedding, edge_embedd
                         edge_in.append([edge_embedding[k][1], edge_embedding[k][2]])
                         break
             else:
-                print("Edge from nodes %s to nodes %s:  edgeFeature: %s" % (
+                print("Edge from node %s to node %s:  edgeFeature: %s" % (
                     edge_embedding[k][0], edge_embedding[k][1], edge_embedding[k][2]))
     else:
         for k in range(len(edge_embedding)):
+            if edge_list[k][0] in F_point:
+                edge_out.append([edge_embedding[k][0], edge_embedding[k][2]])
+            elif edge_list[k][1] in F_point:
+                edge_in.append([edge_embedding[k][1], edge_embedding[k][2]])
+
             if edge_list[k][0] in C_point:
                 edge_out.append([edge_embedding[k][0], edge_embedding[k][2]])
             elif edge_list[k][1] in C_point:
@@ -313,8 +295,8 @@ def construct_var_edge_vec(edge_list, node_embedding, var_embedding, edge_embedd
             elif edge_list[k][1] in S_point:
                 edge_in.append([edge_embedding[k][1], edge_embedding[k][2]])
 
-    edge_vec_length = 52
-    var_vec_length = 68
+    edge_vec_length = 44
+    var_vec_length = 61
 
     for i in range(len(var_in)):
         var_in_node.append(var_in[i][0])
@@ -341,84 +323,173 @@ def construct_var_edge_vec(edge_list, node_embedding, var_embedding, edge_embedd
     edgeOut_dict = dict(edge_out)
 
     for i in range(len(node_embedding)):
-        vec = np.zeros(node_embeddings_dim)
-        if node_embedding[i][0] in S_point:
+        vec = np.zeros(node_embedding_dim_without_edge, dtype=int)
+        if node_embedding[i][0] in F_point:
             node_feature = node_embedding[i][1].tolist() + np.array(varIn_dict[node_embedding[i][0]]).tolist() + \
-                           np.array(varOut_dict[node_embedding[i][0]]).tolist() + np.array(
-                edgeIn_dict[node_embedding[i][0]]).tolist() + \
-                           np.array(edgeOut_dict[node_embedding[i][0]]).tolist()
+                           np.array(varOut_dict[node_embedding[i][0]]).tolist()
+            vec[0:len(np.array(node_feature))] = np.array(node_feature)
+            node_vec.append([node_embedding[i][0], vec])
+        elif node_embedding[i][0] in S_point:
+            node_feature = node_embedding[i][1].tolist() + np.array(varIn_dict[node_embedding[i][0]]).tolist() + \
+                           np.array(varOut_dict[node_embedding[i][0]]).tolist()
             vec[0:len(np.array(node_feature))] = np.array(node_feature)
             node_vec.append([node_embedding[i][0], vec])
         elif node_embedding[i][0] in W_point:
             node_feature = node_embedding[i][1].tolist() + np.array(varIn_dict[node_embedding[i][0]]).tolist() + \
-                           np.array(varOut_dict[node_embedding[i][0]]).tolist() + np.array(
-                edgeIn_dict[node_embedding[i][0]]).tolist() + \
-                           np.array(edgeOut_dict[node_embedding[i][0]]).tolist()
+                           np.array(varOut_dict[node_embedding[i][0]]).tolist()
             vec[0:len(np.array(node_feature))] = np.array(node_feature)
             node_vec.append([node_embedding[i][0], vec])
         elif node_embedding[i][0] in C_point:
             node_feature = node_embedding[i][1].tolist() + np.array(varIn_dict[node_embedding[i][0]]).tolist() + \
-                           np.array(varOut_dict[node_embedding[i][0]]).tolist() + np.array(
-                edgeIn_dict[node_embedding[i][0]]).tolist() + \
-                           np.array(edgeOut_dict[node_embedding[i][0]]).tolist()
+                           np.array(varOut_dict[node_embedding[i][0]]).tolist()
             vec[0:len(np.array(node_feature))] = np.array(node_feature)
             node_vec.append([node_embedding[i][0], vec])
 
     for i in range(len(node_vec)):
-        node_vec[i][1].astype(np.float64)
         node_vec[i][1] = node_vec[i][1].tolist()
 
-    # print(node_vec)
+    print("Node Vec:")
+    for i in range(len(node_vec)):
+        node_vec[i][0] = node_convert[node_vec[i][0]]
+        print(node_vec[i][0], node_vec[i][1])
 
-    return node_vec
+    for i in range(len(edge_embedding)):
+        edge_embedding[i][2] = edge_embedding[i][2].tolist()
+
+    # "S" -> 0, W0 -> 1, C0 -> 2
+    if len(edge_encode) == 2:
+        end = edge_encode[len(edge_encode) - 2][1]
+        start = edge_encode[len(edge_encode) - 1][0]
+        flag = edge_encode[len(edge_encode) - 1][1]
+        if end == start and ('VAR' in flag or 'MSG' in flag):
+            edge_encode[len(edge_encode) - 1][1] = edge_encode[len(edge_encode) - 2][0]
+
+    if len(edge_encode) > 2:
+        end1 = edge_encode[len(edge_encode) - 1][1]
+        start2 = edge_encode[len(edge_encode) - 2][0]
+        if end1 == start2 and ('VAR' in end1 or 'MSG' in end1):
+            edge_encode[len(edge_encode) - 1][1] = edge_encode[len(edge_encode) - 3][0]
+
+    for i in range(len(edge_encode)):
+        if i + 1 < len(edge_encode):
+            start1 = edge_encode[i][0]
+            end1 = edge_encode[i][1]
+            start2 = edge_encode[i + 1][0]
+
+            if end1 == start2 and ('VAR' in end1 or 'MSG' in end1):
+                edge_encode[i][1] = edge_encode[i + 1][1]
+                edge_encode[i + 1][0] = edge_encode[i][0]
+            elif 'W' in start1 and 'VAR' in end1:
+                edge_encode[i][1] = 'S'
+
+    print("Edge Vec:")
+    for i in range(len(edge_encode)):
+        edge_encode[i][0] = node_convert[edge_encode[i][0]]
+        edge_encode[i][1] = node_convert[edge_encode[i][1]]
+        print(edge_encode[i][0], edge_encode[i][1], edge_encode[i][2])
+
+    graph_edge = []
+
+    for i in range(len(edge_encode)):
+        graph_edge.append([edge_encode[i][0], edge_encode[i][2][2], edge_encode[i][1]])
+
+    print(graph_edge)
+
+    return node_vec, graph_edge
 
 
 if __name__ == "__main__":
-    inputFileDir = "../../data/reentrancy/graph_data/contract_185/"
-    result = "../../data/reentrancy/graph_data/result.txt"
-    vertex_path = "../../data/reentrancy/graph_data/nodes/27263.sol"
-    edge_path = "../../data/reentrancy/graph_data/edges/27263.sol"
-
-    # specific node
-    nodeNum, node_list, node_attribute_list = extract_node_features(vertex_path)
-    node_attribute_list, extra_var_list = elimination_node(nodeNum, node_list, node_attribute_list)
+    node = "../../data/reentrancy/graph_data/nodes_185_cleaned/cross-function-reentrancy-fixed.sol"
+    edge = "../../data/reentrancy/graph_data/edges_185_cleaned/cross-function-reentrancy-fixed.sol"
+    nodeNum, node_list, node_attribute_list = extract_node_features(node)
+    node_attribute_list, extra_var_list = elimination_node(node_attribute_list)
     node_encode, var_encode, node_embedding, var_embedding = embedding_node(node_attribute_list)
-    edge_list, extra_edge_list = elimination_edge(edge_path)
+    edge_list, extra_edge_list = elimination_edge(edge)
     edge_encode, edge_embedding = embedding_edge(edge_list)
-    node_vec = construct_var_edge_vec(edge_list, node_embedding, var_embedding, edge_embedding)
-    print(node_vec)
+    node_vec, graph_edge = construct_vec(edge_list, node_embedding, var_embedding, edge_embedding, edge_encode)
 
-    # count = 0
-    # dirs1 = os.listdir(inputFileDir)
-    # for file in dirs1:
-    #     inputFilePath = inputFileDir + file
-    #     node_feature, edge_feature = generate_graph(inputFilePath)
-    #     printResult(file, node_feature, edge_feature)
-    #     count += 1
-
-    # if count == len(dirs1):
-    """
-    dirs2 = os.listdir(vertex_path)
-    start_time = time.time()
-    for i in dirs2:
-        f = open(result, 'a')
-        nodeFile = vertex_path + i
-        print(vertex_path + i)
-        nodeNum, node_list, node_attribute_list = extract_node_features(nodeFile)
-        node_attribute_list, extra_var_list = elimination_node(nodeNum, node_list, node_attribute_list)
-        node_encode, var_encode, node_embedding, var_embedding = embedding_node(node_attribute_list)
-        edgeFile = edge_path + i
-        print(edge_path + i)
-        edge_list, extra_edge_list = elimination_edge(edgeFile)
-        edge_encode, edge_embedding = embedding_edge(edge_list)
-        node_vec = construct_var_edge_vec(edge_list, node_embedding, var_embedding, edge_embedding)
-        node_vec = sorted(node_vec, key=lambda x: (x[0]))
-        f.write(i + '\n')
-        for k in range(len(node_vec)):
-            f.write(str(node_vec[k]) + '\n')
-        print()
-        f.close()
-
-    end_time = time.time()
-    print(end_time - start_time)
-    """
+    # v_path = "../../data/reentrancy/graph_data/nodes_185_cleaned/"
+    # e_path = "../../data/reentrancy/graph_data/edges_185_cleaned/"
+    #
+    # corenodes_output_tmp = open('./results/Reentrancy_AutoExtract_corenodes.json', 'w')
+    # fullnodes_ouptput_tmp = open('./results/Reentrancy_AutoExtract_fullnodes.json', 'w')
+    # corenodes_ouptput_gcn = open('./results/Reentrancy_AutoExtract_corenodes.txt', 'a')
+    # fullnodes_ouptput_gcn = open('./results/Reentrancy_AutoExtract_fullnodes.txt', 'a')
+    # contract_name = open("./reentrancy_contract_name.txt")  # contracts list
+    # contract_label = open("./reentrancy_contract_label.txt")  # contracts label
+    # names = contract_name.readline().strip(" ")
+    # labels = contract_label.readline()
+    #
+    # while names:
+    #     node = os.path.join(v_path, names.strip('\n'))
+    #     edge = os.path.join(e_path, names.strip('\n'))
+    #     print(node)
+    #
+    #     nodeNum, node_list, node_attribute_list = extract_node_features(node)
+    #     node_attribute_list, extra_var_list = elimination_node(node_attribute_list)
+    #     node_encode, var_encode, node_embedding, var_embedding = embedding_node(node_attribute_list)
+    #
+    #     edge_list, extra_edge_list = elimination_edge(edge)
+    #     edge_encode, edge_embedding = embedding_edge(edge_list)
+    #     node_vec, graph_edge = construct_vec(edge_list, node_embedding, var_embedding, edge_embedding, edge_encode)
+    #
+    #     node_embedding = sorted(node_embedding, key=lambda x: (x[0]))
+    #     var_embedding = sorted(var_embedding, key=lambda x: (x[0]))
+    #     fullnodes_ouptput_gcn.write(names)
+    #     corenodes_ouptput_gcn.write(names)
+    #
+    #     for k in range(len(node_embedding)):
+    #         node_embedding[k][1].astype(np.float64)
+    #         node_embedding[k][1] = node_embedding[k][1].tolist()
+    #         fullnodes_ouptput_gcn.write(str(node_embedding[k][0]) + ":" + str(node_embedding[k][1]) + '\n')
+    #     for k in range(len(var_embedding)):
+    #         var_embedding[k][1].astype(np.float64)
+    #         var_embedding[k][1] = var_embedding[k][1].tolist()
+    #         fullnodes_ouptput_gcn.write(str(var_embedding[k][0]) + ":" + str(var_embedding[k][1]) + '\n')
+    #     for k in range(len(node_vec)):
+    #         corenodes_ouptput_gcn.write(str(node_vec[k][0]) + ":" + str(node_vec[k][1]) + '\n')
+    #
+    #     corenodes_feature_list = []
+    #     for i in range(len(node_vec)):
+    #         corenodes_feature_list.append(node_vec[i][1])
+    #
+    #     fullnodes_feature_list = []
+    #     for i in range(len(node_embedding)):
+    #         fullnodes_feature_list.append(node_embedding[i][1])
+    #     for i in range(len(var_embedding)):
+    #         fullnodes_feature_list.append(var_embedding[i][1])
+    #
+    #     edge_dict = {
+    #         "graph": graph_edge
+    #     }
+    #
+    #     node_feature_dict = {
+    #         "node_features": corenodes_feature_list,
+    #     }
+    #
+    #     graph_dict = ({
+    #         "targets": labels.strip('\n'),
+    #         "graph": graph_edge,  # graph_edge,
+    #         "contract_name": names.strip('\n'),
+    #         "node_features": corenodes_feature_list,  # corenodes_feature_list
+    #     })
+    #
+    #     fullnode_graph_dict = ({
+    #         "targets": labels.strip('\n'),
+    #         "graph": graph_edge,  # graph_edge,
+    #         "contract_name": names.strip('\n'),
+    #         "node_features": fullnodes_feature_list,  # corenodes_feature_list
+    #     })
+    #
+    #     result = json.dumps(graph_dict)
+    #     fullnodes_result = json.dumps(fullnode_graph_dict)
+    #
+    #     corenodes_output_tmp.write(result + "," + "\n")
+    #     fullnodes_ouptput_tmp.write(fullnodes_result + "," + "\n")
+    #     names = contract_name.readline()
+    #     labels = contract_label.readline()
+    #
+    # fullnodes_ouptput_gcn.close()
+    # corenodes_ouptput_gcn.close()
+    # corenodes_output_tmp.close()
+    # fullnodes_ouptput_tmp.close()
