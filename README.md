@@ -1,4 +1,4 @@
-# GGNNSmartVulDetector![GitHub stars](https://img.shields.io/github/stars/Messi-Q/GGNNSmartVulDetector.svg?style=plastic) ![GitHub forks](https://img.shields.io/github/forks/Messi-Q/GGNNSmartVulDetector.svg?color=blue&style=plastic) ![License](https://img.shields.io/github/license/Messi-Q/GGNNSmartVulDetector.svg?color=blue&style=plastic)
+# GNNSCVulDetector![GitHub stars](https://img.shields.io/github/stars/Messi-Q/GNNSCVulDetector.svg?style=plastic) ![GitHub forks](https://img.shields.io/github/forks/Messi-Q/GNNSCVulDetector.svg?color=blue&style=plastic) ![License](https://img.shields.io/github/license/Messi-Q/GNNSCVulDetector.svg?color=blue&style=plastic)
 
 This repo is a python implementation of smart contract vulnerability detection based on graph neural networks (GNNs). 
 In this research work, we focus on detecting three kinds of smart contract vulnerabilities (i.e., reentrancy, timestamp dependence, and infinite loop), 
@@ -62,6 +62,10 @@ ${GGNNSmartVulDetector}
 │   └── reentrancy
 │       └── contract
 │       └── graph_data
+├── features
+    ├── loops
+    ├── timestamp
+    └── reentrancy
 ├── train_data
     ├── loops
     │   └── train.json
@@ -72,6 +76,7 @@ ${GGNNSmartVulDetector}
     └── reentrancy
         └── train.json
         └── vaild.json
+      
 
 ```
 
@@ -79,6 +84,7 @@ ${GGNNSmartVulDetector}
 * `data/reentrancy/graph_data`: This is the graph data, consisting edges and nodes, which are extracted by our AutoExtractor.
 * `graph_data/edge`: It includes all edges and edge of each smart contract.
 * `graph_data/node`: It includes all nodes and node of each smart contract.
+* `features/reentrancy`: It includes all the reentrancy features of each smart contract extracted by our model.
 * `train_data/reentrancy/train.json`: This is the training data of all the smart contract.
 * `train_data/reentrancy/valid.json`: This is the testing data of all the smart contract.
 
@@ -92,22 +98,7 @@ ${GGNNSmartVulDetector}
 │   ├── construct_fragment.py
 │   ├── reentrancy/AutoExtractGraph.py
 │   └── reentrancy/graph2vec.py
-├── GGNNChemModel.py
-├── BasicChemModel.py
-└── utils.py
 ```
-
-`GGNNChemModel.py`
-* Interface to project, uses functionality from other code files.
-* Loads dataset, trains TMP model, passes to neural network, models evaluation.
-* Specific implementation for TMP model 
-
-`BasicChemModel.py`
-* Basically model of TMP.
-* Basicall hyper-parameters for TMP.
-
-`utils.py`
-* The general tools for adjusting the iteration of models, include make_network_params.
 
 `AutoExtractGraph.py`
 * All functions in the smart contract code are automatically split and stored.
@@ -124,41 +115,21 @@ python AutoExtractGraph.py
 python graph2vec.py
 ```
 
-**Note:** The graph structure automation extraction tool is being improved.
-
 
 ## Running project
-* To run the program, use this command: python GGNNChemModel.py.
-* Also, you can use specific hyper-parameters to train the model, which can be found in `GGNNChemModel.py` and `BasicChemModel.py`.
+* To run the program, use this command: python GNNSCModel.py.
 
 Examples:
 ```shell
-python GGNNChemModel.py --random_seed 9930 --thresholds 0.45
+python GNNSCModel.py --random_seed 9930 --thresholds 0.45
 ```
 
-Using script：
-Repeating 10 times for different seeds with `reentrancy_seed.sh`.
-```shell
-for i in $(seq 1 10);
-do seed=$(( (RANDOM % 10000) + 1 ));
-python ./GGNNChemModel.py --random_seed $seed --thresholds 0.45 | tee logs/SVDetector_"$i".log;
-done
-```
-Repeating for different thresholds with `*_threshold.sh`.
-```shell
-for i in 0.352 0.38 0.4 0.42 0.45 0.48 0.5 0.52 0.55;
-do
-python ./GGNNChemModel.py --random_seed 9930 --thresholds $i | tee logs/SVDetector_"$i".log;
-done
-```
-Then, you can find the training results in the `logs`.
-
+**Note:** Request Email: messi.qp711@gmail.com for the code of `GNNSCModel`. Part of the network refers to the code of reference 2.
+More specific questions ask for zhuangyuan2020@outlook.com, liuzhenguang2008@gmail.com, and qi.liu@cs.ox.ac.uk.
 
 ## References
 1. VNT Document. [vnt-document](https://github.com/vntchain/vnt-documentation).
-2. Smart contract vulnerability detection based on graph neural network (GCN). [GraphDeeSmartContract](https://github.com/Messi-Q/GraphDeeSmartContract).
-3. Thomas N. Kipf, Max Welling, Semi-Supervised Classification with Graph Convolutional Networks, ICLR 2017. [GCN](https://arxiv.org/abs/1609.02907).
-4. Li Y, Tarlow D, Brockschmidt M, et al. Gated graph sequence neural networks. ICLR, 2016. [GGNN](https://arxiv.org/abs/1511.05493)
+2. Li Y, Tarlow D, Brockschmidt M, et al. Gated graph sequence neural networks. ICLR, 2016. [GGNN](https://arxiv.org/abs/1511.05493)
 
 
 
